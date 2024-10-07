@@ -1,0 +1,47 @@
+from transformers import T5TokenizerFast, T5ForConditionalGeneration
+import pandas as pd
+
+
+#You have to register the name of the tokenizer you are using here. It is just the file name of you tokenizer that you can find in the local disk.
+tokenizer_save_path = "./T5_WCB_v1"
+
+#You have to register the name of the model you are using here. It is just the file name of you model that you can find in the local disk.
+model_save_path = "./T5_WCB_v9"
+
+#Here it is just the file path of the "Les Doctomots" ( Do not forget to change \ in / if necessary)
+Wording_excel = "C:/Users/tristan.bernard/Downloads/Les Doctomots.xlsx"
+
+
+#NO NEED TO GO FURTHER TO RUN THE CODE
+#----------------------------------------------------------------------------------------------------------------------------------------
+
+
+technique_sheet = 'Mots techniques Docto'
+Sheet_technique = pd.read_excel(Wording_excel, sheet_name=technique_sheet, header=None)
+Sheet_technique = Sheet_technique.drop(0)
+Sheet_technique.reset_index(drop=True, inplace=True)
+Sheet_technique = Sheet_technique.drop(Sheet_technique.columns[0], axis=1)
+Sheet_technique.columns = Sheet_technique.iloc[0]
+Sheet_technique = Sheet_technique.drop(Sheet_technique.index[0])
+
+tokenizer = T5TokenizerFast.from_pretrained(tokenizer_save_path)
+
+mots_a_ajouter = Sheet_technique.iloc[:, 0].tolist()
+mots_a_ajouter = [mot for mot in mots_a_ajouter if tokenizer.convert_tokens_to_ids(mot) == tokenizer.unk_token_id]
+
+# Ajouter les tokens au tokenizer
+num_added_toks = tokenizer.add_tokens(mots_a_ajouter)
+print(f"Nombre de tokens ajoutés : {num_added_toks}")
+
+# Charger le modèle
+model = T5ForConditionalGeneration.from_pretrained(model_save_path)
+
+# Redimensionner les embeddings du modèle pour inclure les nouveaux tokens
+model.resize_token_embeddings(len(tokenizer))
+
+# Sauvegarder le tokenizer et le modèle mis à jour
+tokenizer.save_pretrained(tokenizer_save_path)
+model.save_pretrained(model_save_path)
+
+# Sauvegarder le tokenizer
+tokenizer.save_pretrained(tokenizer_save_path)
