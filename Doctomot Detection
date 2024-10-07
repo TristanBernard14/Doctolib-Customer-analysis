@@ -1,0 +1,351 @@
+import itertools
+import pandas as pd
+import re
+
+#FILEPATH
+
+# The following file path has to be the one corresponding to the Excel file "French_words" which is available on the drive.
+# If it not has been done, you have to upload on you PC (local), and paste the link below (Do not forget to remplace \ by / )
+# FYI - The Database come from: http://www.lexique.org/
+
+database_french_word = 'C:/Users/tristan.bernard/Downloads/French_words.xlsx'
+
+#Here, you just have to give the name of the output file path (with unknown words) in CSV.
+output_sheet = 'C:/Users/tristan.bernard/Downloads/Mots_Inconnus.csv'
+
+#You have to mentionned here the filepath of the Raw cases you want to analyse in order to find unknown words.
+#It has to be an xlsx file AND the description column of you sheet has to be named description
+Export_excel = "C:/Users/tristan.bernard/Downloads/Data Pour mots docto2.xlsx"
+
+#Here it is just the file path of the "Les Doctomots"
+Wording_excel = "C:/Users/tristan.bernard/Downloads/Les Doctomots.xlsx"
+
+#PARAMETERS
+#The variable is_test is just here in order to define the lenght of the Export_excel dataframe. If "True" is defined,
+# only the first 15 lines are taken into account, other wise it is the full document (as it should usually be).
+
+is_test="True"
+
+#NO NEED TO GO FURTHER TO RUN THE CODE
+#----------------------------------------------------------------------------------------------------------------------------------------
+
+
+technique_sheet = 'Mots techniques Docto'
+Sheet_technique = pd.read_excel(Wording_excel, sheet_name=technique_sheet,header=None)
+Sheet_technique = Sheet_technique.drop(0)
+Sheet_technique.reset_index(drop=True, inplace=True)
+Sheet_technique = Sheet_technique.drop(Sheet_technique.columns[0], axis=1)
+Sheet_technique.columns = Sheet_technique.iloc[0]
+Sheet_technique = Sheet_technique.drop(Sheet_technique.index[0])
+
+abrev_sheet = 'Abréviaiton to Word'
+
+Sheet_abrev = pd.read_excel(Wording_excel, sheet_name=abrev_sheet,header=None)
+Sheet_abrev = Sheet_abrev.drop(0)
+Sheet_abrev.reset_index(drop=True, inplace=True)
+Sheet_abrev = Sheet_abrev.drop(Sheet_abrev.columns[0], axis=1)
+Sheet_abrev.columns = Sheet_abrev.iloc[0]
+Sheet_abrev = Sheet_abrev.drop(Sheet_abrev.index[0])
+
+
+
+def generate_casse_variations(word):
+    if isinstance(word, str):  # Vérifiez que l'entrée est une chaîne de caractères
+        return set(map(''.join, itertools.product(*((char.upper(), char.lower()) for char in word))))
+    else:
+        return set()
+
+def extract_reason_of_call(text):
+    if not isinstance(text, str):
+        return "x"
+    text = re.sub(r'\n\s*\n', '\n', text)
+    text = ' '.join(text.split())
+    text = text.replace("1-", "1/")
+    text = text.replace("2-", "2/")
+    text = text.replace("3-", "3/")
+    text = text.replace("4-", "4/")
+    text = text.replace("5-", "5/")
+    text = text.replace("6-", "6/")
+    match = re.search(r'Raison de l\'appel :[ ]?(1/|2/|3/|4/|5/|6/)?(.*?)(?=-|$)', text)
+    if match:
+        return match.group(2).strip()
+    else:
+        return "x"
+    
+def extract_reason_of_call2(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison de l\'appel :\s*\n(.*?)\n', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', '. ')
+        reason = reason.replace('-', '')
+        return reason.strip()
+    else:
+        return "x"
+
+def extract_reason_of_call3(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison d\'appel : (.*?)\n\nSolution apportée', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+    
+def extract_reason_of_call4(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison d\'appel : (.*?)\nSolution apportée', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+    
+def extract_reason_of_call5(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison d\'appel : (.*?)Solution apportée', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+
+def extract_reason_of_callD(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison d\'appel : (.*?)Vérification', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+
+def extract_reason_of_call6(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison : (.*?)\nTV', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+    
+def extract_reason_of_call7(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison : (.*?)TV', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+
+def extract_reason_of_call8(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison : (.*?)TV', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+    
+def extract_reason_of_callA(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison de l\'appel (.*?)Vérification', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace(':', ' ')
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+    
+def extract_reason_of_callB(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison de l\'appel (.*?)Investigation', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace(':', ' ')
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+
+def extract_reason_of_callC(text):
+    if not isinstance(text, str):
+        return "Z"
+    match = re.search(r'Raison de l\'appel : (.*?)Vérification :', text)
+    if match:
+        reason = match.group(1).strip()
+        reason = reason.rstrip('. ')
+        return reason
+    else:
+        return "x"
+    
+def extract_reason_of_callE(text):
+    if not isinstance(text, str):
+        return "Z"
+    match = re.search(r'Raison de l\'appel :\s*\n- (.*?)\n', text, re.DOTALL)
+    if match:
+        reason = match.group(1).strip()
+        return reason
+    else:
+        return "x"
+
+    
+def extract_reason_of_call9(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison appel (.*?)Solution apportée', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        reason = match.group(1).replace(':', ' ')
+        return reason.strip()
+    else:
+        return "x"
+    
+def extract_reason_of_call10(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'Raison (.*?)Solution apportée', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "x"
+
+def return_text_or_x(text):
+    if not isinstance(text, str):
+        return "x"
+    word_count = len(text.split())
+    return text if word_count <= 5 else "x"
+
+def extract_shortest_reason_for_call(text):
+    if not isinstance(text, str):
+        return "x"
+    text = text.replace('\n'," ")
+    pattern = r"- Raison de l'appel :\s*(.*?)(?=\s*-? (?:Vérifications effectuées |RDV concerné|Utilisation de TV))"
+    matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+    
+    if matches:
+        shortest_match = min(matches, key=len)
+        return shortest_match.strip()  
+    return "x" 
+
+def extract_text_G1(text):
+    if not isinstance(text, str):
+        return "x"
+    match = re.search(r'I - (.*?) R -', text)
+    if match:
+        return match.group(1).strip()
+    return "x" 
+
+def extract_reason_FR(text):
+    reason = extract_shortest_reason_for_call(text)
+    if reason == "x":
+        reason = extract_reason_of_callE(text)
+        if reason == "x":
+                reason = extract_reason_of_callC(text)
+                if reason == "x":
+                        reason = extract_reason_of_call(text)
+                        if reason == "x":
+                            reason = extract_reason_of_callD(text)
+                            if reason == "x":
+                                reason = extract_reason_of_call2(text)
+                                if reason == "x":
+                                    reason = extract_reason_of_call3(text)
+                                    if reason == "x":
+                                        reason = extract_reason_of_call4(text)
+                                        if reason == "x":
+                                            reason = extract_reason_of_call5(text)
+                                            if reason == "x":
+                                                    reason = extract_reason_of_callA(text)
+                                                    if reason == "x":
+                                                        reason = extract_reason_of_callB(text)
+                                                        if reason == "x":
+                                                            reason = extract_reason_of_call6(text)
+                                                            if reason == "x":
+                                                                reason = extract_reason_of_call7(text)
+                                                                if reason == "x":
+                                                                    reason = extract_reason_of_call8(text)
+                                                                    if reason == "x":
+                                                                        reason = extract_reason_of_call9(text)
+                                                                        if reason == "x":
+                                                                            reason = extract_reason_of_call10(text)
+                                                                            if reason =="x":
+                                                                                reason = return_text_or_x(text)
+    return reason
+
+
+def remove_punctuation(text):
+    punctuation_chars = '.,;:!?"()[]{}-_/§£$€'
+    translator = str.maketrans('', '', punctuation_chars)
+    text = text.translate(translator) if isinstance(text, str) else text
+    text = text.replace("'", " ")
+    text = re.sub(r'\d+', '', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
+
+
+def mots_non_dans_df(texte, ensemble_total):
+    global mots_non_trouves_globale  
+    mots_texte = texte.split()
+    mots_non_trouves = [mot for mot in mots_texte if mot.lower() not in ensemble_total]
+    mots_non_trouves_globale.extend(mots_non_trouves)
+    return mots_non_trouves
+
+def mots_deux_caracteres_ou_plus(texte):
+    mots = texte.split()
+    mots_filtrés = [mot for mot in mots if len(mot) >= 2]
+    return ' '.join(mots_filtrés) if mots_filtrés else ''
+
+print("Welcome! ")
+print("Lets go for a new word detection !\n")
+
+df = pd.read_excel(Export_excel,engine='openpyxl')
+
+if is_test=="True":
+    df=df.head(15)
+
+df['description_nlped'] = df['description'].apply(extract_reason_FR)
+df['description_nlped'] = df['description_nlped'].apply(remove_punctuation)
+
+    
+
+voc_sheet = 'Vocabulaire'
+df2 = pd.read_excel(database_french_word, sheet_name=voc_sheet)
+
+ensemble_mots = set(df2['Vocabulaire'].astype(str).str.lower())
+mots_sheet_technique = set(Sheet_technique.iloc[:, 0].astype(str).str.lower())
+mots_sheet_abrev = set(Sheet_abrev.iloc[:, 0].astype(str).str.lower())
+ensemble_total = ensemble_mots.union(mots_sheet_technique).union(mots_sheet_abrev)
+
+
+mots_non_trouves_globale = []
+
+all_unique_words = []
+print(f"Number of cases analysed: {len(df)}") 
+
+
+for start in range(0, len(df), 50):
+    end = start + 50
+    indices = df.index[start:end]
+    
+    df.loc[indices, 'description_nlped'] = df.loc[indices, 'description_nlped'].apply(mots_deux_caracteres_ou_plus)
+    df['mots_non_trouves'] = df['description_nlped'].apply(lambda x: mots_non_dans_df(x, ensemble_total))
+    
+    flat_list = [item for sublist in df.loc[indices, 'mots_non_trouves'] for item in sublist]
+    all_unique_words.extend(flat_list)
+
+all_unique_words = list(set(all_unique_words))
+print(f"Number of potential newly words detected: {len(all_unique_words)}") 
+print("You can find the newly detected word at the output file path that you specified :)\n")
+
+df2 = pd.DataFrame(all_unique_words, columns=['unique_words'])
+df2.to_csv(output_sheet, index=False, encoding='utf-8-sig')
+
+
