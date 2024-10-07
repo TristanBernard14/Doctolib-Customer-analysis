@@ -1,0 +1,100 @@
+import pandas as pd
+from transformers import T5Tokenizer, T5ForConditionalGeneration
+import torch
+from prompt_toolkit import PromptSession
+
+session = PromptSession()
+
+# Here you have to specify the output file, where your results will be saved : 
+Output_file = 'C:/Users/tristan.bernard/Downloads/training_data_from_console.xlsx'
+
+#As usual, please defined the SUM tokenizer path below : 
+tokenizer_save_path = "./T5_WCB_v1"
+
+#As usual, please defined the model path below : 
+model_save_path =  "./T5_WCB_v10"
+
+# The data that need to be uploaded to be trained need to be import here : 
+Export_excel = "C:/Users/tristan.bernard/Downloads/slots to console.xlsx"
+
+#Nop, do not touch that :)
+df = pd.read_excel(Export_excel,engine='openpyxl')
+
+# Inside of the [], specify the first line and the last line of the training data that you want to plot
+df=df.iloc[0:25]
+
+
+#NO NEED TO GO FURTHER TO RUN THE CODE
+#----------------------------------------------------------------------------------------------------------------------------------------
+
+tokenizer = T5Tokenizer.from_pretrained(tokenizer_save_path)
+model = T5ForConditionalGeneration.from_pretrained(model_save_path)
+
+nb_lines = len(df)
+print(f"Nombre de cases analysé: {nb_lines}") 
+
+generation_config = {
+    'temperature': 0.9,
+    'top_k': 35,
+    'top_p': 0.95,
+    'no_repeat_ngram_size': 2,
+    'do_sample': True,  
+    'max_new_tokens' : 45,
+    'num_return_sequences':3,
+    'num_beams':5}
+
+# Charger ou créer votre jeu de données d'entrée
+input_data = df['description_trad_tag']  
+training_data = {'input': [], 'summary': []}
+
+
+def prefill_with_text(prompt, text):
+    def hook():
+        session.prompt.insert_text(text)
+        session.prompt.redisplay()
+    session.prompte.set_pre_input_hook(hook)
+    result = input(prompt)
+    session.prompt.set_pre_input_hook() 
+    return result
+
+
+def summarize_texts_WCB(texts):
+    if not isinstance(texts, str):
+        return "Delete"
+    input_text = texts
+    input_ids = tokenizer.encode(input_text, return_tensors='pt', truncation=True, max_length=100)
+    with torch.no_grad():
+        summary_ids = model.generate(input_ids,**generation_config)
+        summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+    return summary
+
+
+print("Appuyez sur Entrée si le résumé est correct, tapez 'a' pour un autre résumé, ou tapez un résumé correct : ")
+for text in input_data:
+    summary = summarize_texts_WCB(text)
+    
+    print("__________________________________________________________________________________________")
+    print(f"Résumé généré pour '{text}':\n\n{summary}")
+    user_input = input("")
+    
+    # Générer un deuxième résumé si l'utilisateur tape 'a'
+    if user_input.lower() == 'a':
+        summary = summarize_texts_WCB(text)
+        print(f"Deuxième résumé généré pour '{text}':\n{summary}")
+        user_input = input("Appuyez sur Entrée si le résumé est correct, ou tapez un résumé correct : ")
+    
+    # Ajouter le résumé au jeu de données d'entraînement
+    if user_input == "":
+        training_data['input'].append(text)
+        training_data['summary'].append(summary)
+    elif user_input.lower() != 'a':  # S'assurer que 'a' n'est pas utilisé comme résumé
+        training_data['input'].append(text)
+        training_data['summary'].append(user_input)
+    elif user_input.lower() == 'w':
+        # Préremplir l'entrée avec le résumé généré
+        user_input = prefill_with_text("Éditez le résumé : ", summary)
+    
+
+# Enregistrer le jeu de données final en format Excel
+pd.DataFrame(training_data).to_excel(Output_file, index=False)
+print(f"Jeu de données d'entraînement mis à jour et enregistré à {Output_file}.")
