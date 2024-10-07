@@ -1,0 +1,980 @@
+import itertools
+import pandas as pd
+import re
+from datetime import datetime
+from transformers import T5Tokenizer, T5ForConditionalGeneration
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import spacy
+from sentence_transformers import SentenceTransformer
+import torch
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import DBSCAN
+import numpy as np
+
+#SUM MODEL 
+#Specify the file path of the SUM tokenizer
+tokenizer_sum_path = "C:/Users/tristan.bernard/Tokenizer_SUM"
+#Specify the file path of the SUM model
+model_sum_path =  "C:/Users/tristan.bernard/T5_WCB_v10"
+
+#CLASSIFICATION MODEL
+#Specify the file path of the Classification model
+model_clus_path="C:/Users/tristan.bernard/Classiv0"
+
+#TRAD MODEL OPUS
+model_tradopus_path_FR= "C:/Users/tristan.bernard/model_opus_fr"
+model_tradopus_path_DE= "C:/Users/tristan.bernard/model_opus_de"
+
+#TRAD MODEL MAX
+#Specify the file path of the Trad_MAX model (no tokenizer needed here)
+model_trad_MAX = "C:/Users/tristan.bernard/model_trad_MAX"
+
+
+#EXCEL SHEET
+#Specify the file path of the Excel with your input data
+Input_excel = "C:/Users/tristan.bernard/Downloads/Test_de.xlsx"
+
+#Specify the file path of the "Les Doctomots" sheet
+Wording_excel = "C:/Users/tristan.bernard/Downloads/Les Doctomots.xlsx"
+
+#Specify here the name of the output file
+name_output_sheet = "xxxxx"
+
+#QUALITY AND PARAMETERS
+#Specify here the quality of the summarization  you want : "low" or "high"
+sum_quality='low'
+
+#Specify here the quality of the traduction you want : "low", "medium" or "high"
+trad_quality='high'
+
+#More technical parameters you can change, but I recommand those one : 
+temperature =0.9
+top_k = 25
+top_p=0.95
+first_eps=0.1
+second_eps=0.15
+
+
+#NO NEED TO GO FURTHER TO RUN THE CODE
+#----------------------------------------------------------------------------------------------------------------------------------------
+
+tokenizer = T5Tokenizer.from_pretrained(tokenizer_sum_path)
+model = T5ForConditionalGeneration.from_pretrained(model_sum_path)
+model.eval()
+
+if sum_quality == 'high':
+    num_beams=4
+    quantified_model = 'No'
+
+if sum_quality == 'low':
+    num_beams=2
+    quantified_model = 'Yes'
+
+generation_config = {
+    'temperature': temperature,
+    'top_k': top_k,
+    'top_p': top_p,
+    'no_repeat_ngram_size': 2,
+    'do_sample': True,  
+    'max_new_tokens' : 45,
+    'num_return_sequences':1,
+    'num_beams':num_beams}
+
+
+#Modéles de Traductions
+tokenizer_opus_fr = AutoTokenizer.from_pretrained(model_tradopus_path_FR)
+model_opus_fr = AutoModelForSeq2SeqLM.from_pretrained(model_tradopus_path_FR)
+model_opus_fr.eval()
+
+tokenizer_opus_de = AutoTokenizer.from_pretrained(model_tradopus_path_DE)
+model_opus_de = AutoModelForSeq2SeqLM.from_pretrained(model_tradopus_path_DE)
+model_opus_de.eval()
+
+
+tokenizer_600 = AutoTokenizer.from_pretrained(model_trad_MAX)
+model_600 = AutoModelForSeq2SeqLM.from_pretrained(model_trad_MAX)
+model_600.eval()
+
+tokenizer.src_lang = "fra_Latn"
+target_lang = "eng_Latn"
+
+
+if trad_quality =='low':
+    model_trad_fr = torch.quantization.quantize_dynamic(
+        model_opus_fr,
+        {torch.nn.Linear},  
+        dtype=torch.qint8 
+        )
+    tokenizer_trad_fr = tokenizer_opus_fr
+
+if trad_quality =='medium':
+    model_trad_fr = torch.quantization.quantize_dynamic(
+        model_600,
+        {torch.nn.Linear},  
+        dtype=torch.qint8 
+        )
+    tokenizer_trad_fr = tokenizer_600
+
+if trad_quality =='high':
+    model_trad_fr = model_600
+    tokenizer_trad_fr = tokenizer_600
+
+if trad_quality =='low':
+    model_trad_de = torch.quantization.quantize_dynamic(
+        model_opus_de,
+        {torch.nn.Linear},  
+        dtype=torch.qint8 
+        )
+    tokenizer_trad_de = tokenizer_opus_de
+
+if trad_quality =='medium':
+    model_trad_de = torch.quantization.quantize_dynamic(
+        model_600,
+        {torch.nn.Linear},  
+        dtype=torch.qint8 
+        )
+    tokenizer_trad_de = tokenizer_600
+
+
+if trad_quality =='high':
+    model_trad_de = model_600
+    tokenizer_trad_de = tokenizer_600
+
+
+
+def count_tokens(description):
+    return len(tokenizer_trad_fr.tokenize(description))
+
+def generate_casse_variations(word):
+    return set(map(''.join, itertools.product(*zip(word.upper(), word.lower()))))
+
+def extract_reason_of_call_DE1(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'I- (.*?)\nR-', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_call_DE2(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'I - (.*?)\nR -', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_call_DE3(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'I - (.*?)\nR -', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+
+def extract_reason_of_call(text):
+    if not isinstance(text, str):
+        return "not_found"
+    text = re.sub(r'\n\s*\n', '\n', text)
+    text = ' '.join(text.split())
+    text = text.replace("1-", "1/")
+    text = text.replace("2-", "2/")
+    text = text.replace("3-", "3/")
+    text = text.replace("4-", "4/")
+    text = text.replace("5-", "5/")
+    text = text.replace("6-", "6/")
+    match = re.search(r'Raison de l\'appel :[ ]?(1/|2/|3/|4/|5/|6/)?(.*?)(?=-|$)', text)
+    if match:
+        return match.group(2).strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_call2(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison de l\'appel :\s*\n(.*?)\n', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', '. ')
+        reason = reason.replace('-', '')
+        return reason.strip()
+    else:
+        return "not_found"
+
+def extract_reason_of_call3(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison d\'appel : (.*?)\n\nSolution apportée', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_call4(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison d\'appel : (.*?)\nSolution apportée', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_call5(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison d\'appel : (.*?)Solution apportée', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+
+def extract_reason_of_callD(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison d\'appel : (.*?)Vérification', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+
+def extract_reason_of_call6(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison : (.*?)\nTV', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_call7(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison : (.*?)TV', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+
+def extract_reason_of_call8(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison : (.*?)TV', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_callA(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison de l\'appel (.*?)Vérification', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace(':', ' ')
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_callB(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison de l\'appel (.*?)Investigation', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace(':', ' ')
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+
+def extract_reason_of_callC(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison de l\'appel : (.*?)Checks performed', text)
+    if match:
+        reason = match.group(1).strip()
+        reason = reason.rstrip('. ')
+        return reason
+    else:
+        return "not_found"
+    
+def extract_reason_of_callE(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison de l\'appel :\s*\n- (.*?)\n', text, re.DOTALL)
+    if match:
+        reason = match.group(1).strip()
+        return reason
+    else:
+        return "not_found"
+
+    
+def extract_reason_of_call9(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison appel (.*?)Vérification', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_call10(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison (.*?)Solution apportée', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+def extract_reason_of_call11(text):
+    if not isinstance(text, str):
+        return "not_found"
+    match = re.search(r'Raison (.*?)- Agenda', text, re.DOTALL)
+    if match:
+        reason = match.group(1).replace('\n', ' ')
+        return reason.strip()
+    else:
+        return "not_found"
+    
+
+def return_text_or_x(text):
+    if not isinstance(text, str):
+        return "not_found"
+    word_count = len(text.split())
+    return text if word_count <= 5 else "too_long"
+
+def extract_shortest_reason_for_call(text):
+    if not isinstance(text, str):
+        return "not_found"
+    text = text.replace('\n'," ")
+    pattern = r"- Raison de l'appel :\s*(.*?)(?=\s*-? (?:Vérifications effectuées | RDV |Agenda concerné |RDV concerné|Utilisation de TV))"
+    matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+    
+    if matches:
+        shortest_match = min(matches, key=len)
+        return shortest_match.strip()  
+    return "not_found"
+
+def extract_reason(text):
+    reason = extract_reason_of_call11(text)
+    if reason == "not_found":
+        reason = extract_shortest_reason_for_call(text)
+        if reason == "not_found":
+            reason = extract_reason_of_callE(text)
+            if reason == "not_found":
+                    reason = extract_reason_of_callC(text)
+                    if reason == "not_found":
+                            reason = extract_reason_of_call(text)
+                            if reason =="not_found":
+                                reason = extract_reason_of_callD(text)
+                                if reason == "not_found":
+                                    reason = extract_reason_of_call2(text)
+                                    if reason == "not_found":
+                                        reason = extract_reason_of_call3(text)
+                                        if reason == "not_found":
+                                            reason = extract_reason_of_call4(text)
+                                            if reason == "not_found":
+                                                reason = extract_reason_of_call5(text)
+                                                if reason == "not_found":
+                                                        reason = extract_reason_of_callA(text)
+                                                        if reason == "not_found":
+                                                            reason = extract_reason_of_callB(text)
+                                                            if reason == "not_found":
+                                                                reason = extract_reason_of_call6(text)
+                                                                if reason == "not_found":
+                                                                    reason = extract_reason_of_call7(text)
+                                                                    if reason == "not_found":
+                                                                        reason = extract_reason_of_call8(text)
+                                                                        if reason == "not_found":
+                                                                            reason = extract_reason_of_call9(text)
+                                                                            if reason == "not_found":
+                                                                                reason = extract_reason_of_call10(text)
+                                                                                if reason =="not_found":
+                                                                                    reason = return_text_or_x(text)
+    return reason
+
+def extract_reason_DE(text):
+    reason = extract_reason_of_call_DE1(text)
+    if reason == "not_found":
+        reason = extract_reason_of_call_DE2(text)
+        if reason == "not_found":
+            reason = extract_reason_of_call_DE3(text)
+    return reason
+
+abrev_sheet = 'Abréviaiton to Word'
+technique_sheet = 'Mots techniques Docto'
+abrev_sheet_de ='Abreviation_to_Word_DE'
+bad_word_sheet='Bad_word'
+
+Sheet_abrev = pd.read_excel(Wording_excel, sheet_name=abrev_sheet,header=None)
+Sheet_abrev = Sheet_abrev.drop(0)
+Sheet_abrev.reset_index(drop=True, inplace=True)
+Sheet_abrev = Sheet_abrev.drop(Sheet_abrev.columns[0], axis=1)
+Sheet_abrev.columns = Sheet_abrev.iloc[0]
+Sheet_abrev = Sheet_abrev.drop(Sheet_abrev.index[0])
+
+Sheet_abrev_de= pd.read_excel(Wording_excel, sheet_name=abrev_sheet_de,header=None)
+Sheet_abrev_de = Sheet_abrev_de.drop(0)
+Sheet_abrev_de.reset_index(drop=True, inplace=True)
+Sheet_abrev_de = Sheet_abrev_de.drop(Sheet_abrev_de.columns[0], axis=1)
+Sheet_abrev_de.columns = Sheet_abrev_de.iloc[0]
+Sheet_abrev_de = Sheet_abrev_de.drop(Sheet_abrev_de.index[0])
+
+Sheet_technique = pd.read_excel(Wording_excel, sheet_name=technique_sheet,header=None)
+Sheet_technique = Sheet_technique.drop(0)
+Sheet_technique.reset_index(drop=True, inplace=True)
+Sheet_technique = Sheet_technique.drop(Sheet_technique.columns[0], axis=1)
+Sheet_technique.columns = Sheet_technique.iloc[0]
+Sheet_technique = Sheet_technique.drop(Sheet_technique.index[0])
+Sheet_technique = Sheet_technique.sort_values(by='Mots techniques', key=lambda x: x.str.len(), ascending=False)
+
+counter_tra = 0
+
+def translate_french_to_english_max(texts):
+    global counter_tra
+    counter_tra += len(texts)
+    print(f"Trad: {counter_tra}/{nb_lines}")
+    
+    preprocessed_texts = []
+    for text in texts:
+        Sheet_technique_sorted = Sheet_technique.sort_values(by='Mots techniques', key=lambda x: x.str.len(), ascending=False)
+        placeholders = {word: f"PH_{i}_" for i, word in enumerate(Sheet_technique_sorted['Mots techniques'], start=1)}
+        reverse_placeholders = {v: k for k, v in placeholders.items()}
+        for word, placeholder in placeholders.items():
+            text = re.sub(rf'\b{re.escape(word)}\b', placeholder, text, flags=re.IGNORECASE)
+        preprocessed_texts.append((text, reverse_placeholders))
+    
+    tokenizer_600.src_lang = "fra_Latn"
+    target_lang = "eng_Latn"
+    
+    inputs = tokenizer_600([text for text, _ in preprocessed_texts], return_tensors="pt", padding=True, truncation=True)
+    
+    outputs = model_trad_fr.generate(
+        **inputs,
+        forced_bos_token_id=tokenizer_600.convert_tokens_to_ids(target_lang),
+        max_length=150,  
+        num_beams=2,   
+        early_stopping=True
+    )
+    
+    translated_texts = tokenizer_600.batch_decode(outputs, skip_special_tokens=True)
+    
+    final_texts = []
+    for translated_text, (_, reverse_placeholders) in zip(translated_texts, preprocessed_texts):
+        for placeholder, word in reverse_placeholders.items():
+            translated_text = translated_text.replace(placeholder, word)
+        final_texts.append(translated_text)
+    
+    return final_texts
+
+
+def translate_german_to_english_max(texts):
+    global counter_tra
+    counter_tra += len(texts)
+    print(f"Trad: {counter_tra}/{nb_lines}")
+    
+    preprocessed_texts = []
+    for text in texts:
+        Sheet_technique_sorted = Sheet_technique.sort_values(by='Mots techniques', key=lambda x: x.str.len(), ascending=False)
+        placeholders = {word: f"PH_{i}_" for i, word in enumerate(Sheet_technique_sorted['Mots techniques'], start=1)}
+        reverse_placeholders = {v: k for k, v in placeholders.items()}
+        for word, placeholder in placeholders.items():
+            text = re.sub(rf'\b{re.escape(word)}\b', placeholder, text, flags=re.IGNORECASE)
+        preprocessed_texts.append((text, reverse_placeholders))
+    
+    tokenizer_600.src_lang = "deu_Latn"
+    target_lang = "eng_Latn"
+    
+    inputs = tokenizer_600([text for text, _ in preprocessed_texts], return_tensors="pt", padding=True, truncation=True)
+    
+    outputs = model_trad_de.generate(
+        **inputs,
+        forced_bos_token_id=tokenizer_600.convert_tokens_to_ids(target_lang),
+        max_length=150,  
+        num_beams=2,   
+        early_stopping=True
+    )
+    
+    translated_texts = tokenizer_600.batch_decode(outputs, skip_special_tokens=True)
+    
+    final_texts = []
+    for translated_text, (_, reverse_placeholders) in zip(translated_texts, preprocessed_texts):
+        for placeholder, word in reverse_placeholders.items():
+            translated_text = translated_text.replace(placeholder, word)
+        final_texts.append(translated_text)
+    
+    return final_texts
+
+def translate_french_to_english(text):
+    global counter_tra
+    counter_tra += 1
+    print(f"Trad: {counter_tra}/{nb_lines}")
+    Sheet_technique_sorted = Sheet_technique.sort_values(by='Mots techniques', key=lambda x: x.str.len(), ascending=False)
+    
+    placeholders = {word: f"PH_{i}_" for i, word in enumerate(Sheet_technique_sorted['Mots techniques'], start=1)}
+    reverse_placeholders = {v: k for k, v in placeholders.items()}
+    
+    for word, placeholder in placeholders.items():
+        text = re.sub(rf'\b{re.escape(word)}\b', placeholder, text, flags=re.IGNORECASE)
+    
+    inputs = tokenizer_opus_fr.encode(text, return_tensors="pt", padding=True)
+    outputs = model_opus_fr.generate(inputs, max_length=150, num_beams=1)
+    translated_text = tokenizer_opus_fr.decode(outputs[0], skip_special_tokens=True)
+    
+    for placeholder, word in reverse_placeholders.items():
+        translated_text = translated_text.replace(placeholder, word)
+    
+    return translated_text
+
+def translate_german_to_english(text):
+    global counter_tra
+    counter_tra += 1
+    print(f"Trad: {counter_tra}/{nb_lines}")
+    Sheet_technique_sorted = Sheet_technique.sort_values(by='Mots techniques', key=lambda x: x.str.len(), ascending=False)
+    
+    placeholders = {word: f"PH_{i}_" for i, word in enumerate(Sheet_technique_sorted['Mots techniques'], start=1)}
+    reverse_placeholders = {v: k for k, v in placeholders.items()}
+    
+    for word, placeholder in placeholders.items():
+        text = re.sub(rf'\b{re.escape(word)}\b', placeholder, text, flags=re.IGNORECASE)
+    
+    inputs = tokenizer_opus_de.encode(text, return_tensors="pt", padding=True)
+    outputs = model_opus_de.generate(inputs, max_length=150, num_beams=1)
+    translated_text = tokenizer_opus_de.decode(outputs[0], skip_special_tokens=True)
+    
+    for placeholder, word in reverse_placeholders.items():
+        translated_text = translated_text.replace(placeholder, word)
+    
+    return translated_text
+
+potentially_required_words=Sheet_technique.values.tolist()
+counter =0
+
+def summarize_texts_WCB(text):
+    global counter
+    counter += 1
+    print(f"Sum: {counter}/{nb_lines-count_inf}")
+    words_in_text = text.split()
+    required_words = []
+    for word in words_in_text:
+        if word in potentially_required_words:
+            required_words.append(word)
+
+    if not isinstance(text, str):
+        return "Delete"
+    input_ids = tokenizer.encode(text, return_tensors='pt', truncation=True, max_length=100)
+    with torch.no_grad():
+        summary_ids = model.generate(input_ids, **generation_config)
+    
+    for summary_id in summary_ids:
+        summary = tokenizer.decode(summary_id, skip_special_tokens=True)
+        if all(word in summary for word in required_words):
+            return summary
+    
+    return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+
+def replace_abbreviations(text):
+    abbreviations_df = Sheet_abrev.sort_values(by='Abréivations', key=lambda x: x.str.len(), ascending=False)
+    abbreviations_DE_df = Sheet_abrev_de.sort_values(by='Abréivations_DE', key=lambda x: x.str.len(), ascending=False)
+    for _, row in abbreviations_df.iterrows():
+        abbreviation = row['Abréivations']
+        word = row['Mots']
+        
+        if abbreviation.endswith('.'):
+            pattern = r'\b' + re.escape(abbreviation[:-1]) + r'\.'
+        else:
+            pattern = r'\b' + re.escape(abbreviation) + r'\b'
+        text = re.sub(pattern, word, text, flags=re.IGNORECASE)
+    
+    for _, row in abbreviations_DE_df.iterrows():
+        abbreviation = row['Abréivations_DE']
+        word = row['Mots']
+        
+        if abbreviation.endswith('.'):
+            pattern = r'\b' + re.escape(abbreviation[:-1]) + r'\.'
+        else:
+            pattern = r'\b' + re.escape(abbreviation) + r'\b'
+        text = re.sub(pattern, word, text, flags=re.IGNORECASE)
+    return text
+
+def translate_based_on_country_max(df):
+    batch_size=8
+    translated_texts = []
+    for i in range(0, len(df), batch_size):
+        batch = df.iloc[i:i+batch_size]
+        batch_texts = batch['description_nlped'].tolist()
+        batch_countries = batch['country'].tolist()
+        
+        for text, country in zip(batch_texts, batch_countries):
+            if country == 'fr':
+                translated_texts.extend(translate_french_to_english_max([text]))
+            elif country == 'de':
+                translated_texts.extend(translate_german_to_english_max([text]))
+            else:
+                translated_texts.append(text)
+    
+    return translated_texts
+
+def translate_based_on_country(row):
+    if row['country'] == 'fr':
+        return translate_french_to_english(row['description_nlped'])
+    elif row['country'] == 'de':
+        return translate_german_to_english(row['description_nlped'])
+    else:
+        return row['description_nlped']
+
+
+df = pd.read_excel(Input_excel,engine='openpyxl')
+df=df.head(100)
+Column_to_keep= ['product','channel','category','description','sub_category','created_at','case_number','country']
+for column in Column_to_keep:
+    if column not in df.columns:
+        print(f"The column '{column}' is not in the dataframe, or wrongly written.")
+df = df[df['channel'].isin(['Webcallback'])]
+nb_lines = len(df)
+print(f"Nombre total de cases: {nb_lines+1}") 
+
+df['description_nlped'] = df.apply(
+    lambda row: extract_reason(row['description']) if (row['channel'] == 'Webcallback' and row['country'] == 'fr') 
+    else extract_reason_DE(row['description']) if (row['channel'] == 'Webcallback' and row['country'] == 'de') 
+    else row['description'], 
+    axis=1
+)
+
+
+df['description_nlped'] =df['description_nlped'].apply(replace_abbreviations)
+
+nb_lines = len(df)
+df = df[df['description_nlped'] != "x"]
+df = df[df['description_nlped'] != '']
+df = df[df['description_nlped'] != ' ']
+df = df[df['description_nlped'] != ':x']
+df = df[df['description_nlped'] != ': x']
+df = df[df['description_nlped'] != ': x -']
+df = df[df['description_nlped'] != ': x-']
+df = df[df['description_nlped'] != ': x  - rendez-vous concerné (date et heure) : x  -']
+df = df[df['description_nlped'] != ': x ']
+df = df[df['description_nlped'] != ' x ']
+df = df[df['description_nlped'] != ' x -']
+nb_lines_after = len(df)
+nombre_lignes_supprimees = nb_lines - nb_lines_after
+print(f"Number of deleted case because it is an empty case(='x' or empty): {nombre_lignes_supprimees}")
+
+nb_lines=len(df)
+
+df['token_count'] = df['description_nlped'].apply(count_tokens)
+df.loc[(df['channel'] == 'Webcallback') & (df['token_count'] >= 150), 'description_nlped'] = "not_found"
+df = df[df['description_nlped'] !="not_found"]
+df = df[df['description_nlped'] !="too_long"]
+nb_lines_deltoolong=nb_lines-len(df)
+print(f"Number of cases deleted beacause it is transfered case or the template is not recognized: {nb_lines_deltoolong}")
+
+nb_lines=len(df)
+df.loc[(df['channel'] == 'Webcallback') & (df['description_nlped'].apply(count_tokens) < 4), 'description_nlped'] = "Y"
+df = df[df['description_nlped'] != 'Y']
+nb_lines_deltooshort=nb_lines-len(df)
+print(f"Number of cases deleted beacause they are too short (<= 3 syllabus): {nb_lines_deltooshort}")
+nb_lines=len(df)
+
+count_inf = len(df[df['token_count'] < 7])
+
+
+if trad_quality =='medium' or trad_quality =='high':
+    start_time = datetime.now()
+    translated_texts = translate_based_on_country_max(df)
+    df['description_trad'] = translated_texts
+
+if trad_quality == 'low':
+    start_time = datetime.now()
+    df['description_trad'] = df.apply(translate_based_on_country, axis=1)
+
+#Ou df. apply dans l'autre cas de figure sans le mewx
+end_time = datetime.now()
+duration = end_time - start_time
+print("Time for Trad :", duration)
+
+
+df['description_trad_tag'] = df['country'] +" ///"+df['product'] + " //" + df['category'] + ": " + df['description_trad']
+
+
+end_time2 = datetime.now()
+
+
+df['description_summary'] = df.apply(lambda row: summarize_texts_WCB(row['description_trad_tag']) if row['token_count'] > 6 else row['description_trad'], axis=1)
+
+now = datetime.now()
+duration = now-end_time2
+print("Time for Sum:", duration)
+
+#  PARTIE 2 : CLUSTERING SEMANTIQUE
+
+model_clus = SentenceTransformer(model_clus_path)
+model_clus.eval()
+
+prefix_pattern = r'^(?:- )?(?:The doctor|The secretary|The assistant|The manager) contacts us because (?:she|he|of a )?'
+
+def remove_prefix(text):
+    if not isinstance(text, str):
+        return text
+    return re.sub(prefix_pattern, '', text, flags=re.IGNORECASE).strip()
+
+def remove_dot_at_end(text):
+    if not isinstance(text, str):
+        return text
+    return text.rstrip('.')
+
+def split_text_into_segments(text):
+    if not isinstance(text, str):
+        return ''
+    segments = text.split(" AND ")
+    return segments + [None] * (3 - len(segments))
+
+def get_most_common_or_closest_description(df, cluster_col, text_col):
+    def most_common_or_closest(group):
+        value_counts = group.value_counts()
+        if len(value_counts) == 1 or value_counts.iloc[0] > value_counts.iloc[1]:
+            return value_counts.idxmax()
+        else:
+            # Calculer les embeddings pour les raisons dans le groupe
+            embeddings = model_clus.encode(group.tolist())
+            similarity_matrix = cosine_similarity(embeddings)
+            distance_matrix = 1 - similarity_matrix
+            
+            # Calculer la distance moyenne pour chaque raison
+            avg_distances = distance_matrix.mean(axis=1)
+            
+            # Trouver l'index de la raison avec la distance moyenne la plus faible
+            closest_index = avg_distances.argmin()
+            return group.iloc[closest_index]
+    
+    return df[df[cluster_col] != -1].groupby(cluster_col)[text_col].agg(most_common_or_closest).to_dict()
+
+
+def replace_female_pronouns(text):
+    if not isinstance(text, str):
+        return ''
+    replacements = {
+            r'\bshe\b': 'he',
+            r'\bShe\b': 'He',
+            r'\bher\b': 'his',
+            r'\bHer\b': 'His',
+            r'\bhers\b': 'his',
+            r'\bHers\b': 'His',
+            r'\bherself\b': 'himself',
+            r'\bHerself\b': 'Himself'
+        }
+    for pattern, replacement in replacements.items():
+        text = re.sub(pattern, replacement, text)
+        return text
+
+
+
+temp_df = df['description_summary'].apply(split_text_into_segments).apply(pd.Series)
+df['Reason_1'] = temp_df[0]
+df['Reason_2'] = temp_df[1]
+df['Reason_3'] = temp_df[2]
+
+df['Reason_1_nlped'] = df['Reason_1'].apply(replace_female_pronouns)
+df['Reason_2_nlped'] = df['Reason_2'].apply(replace_female_pronouns)
+df['Reason_3_nlped'] = df['Reason_3'].apply(replace_female_pronouns)
+
+df['Reason_1_nlped'] = df['Reason_1_nlped'].apply(remove_dot_at_end)
+df['Reason_2_nlped'] = df['Reason_2_nlped'].apply(remove_dot_at_end)
+df['Reason_3_nlped'] = df['Reason_3_nlped'].apply(remove_dot_at_end)
+
+df['Reason_1_nlped'] = df['Reason_1_nlped'].apply(remove_prefix)
+df['Reason_2_nlped'] = df['Reason_2_nlped'].apply(remove_prefix)
+df['Reason_3_nlped'] = df['Reason_3_nlped'].apply(remove_prefix)
+
+start_time= datetime.now()
+reasons = pd.concat([df['Reason_1_nlped'], df['Reason_2_nlped'], df['Reason_3_nlped']])
+reasons= reasons[reasons.notna() & reasons.str.strip().astype(bool)]
+
+print(f'There are {len(reasons)} reasons of call identified')
+reasons = pd.Series(reasons).reset_index(drop=True)
+embeddings = model_clus.encode(reasons)
+
+similarity_matrix = cosine_similarity(embeddings)
+
+similarity_matrix[similarity_matrix > 1] = 1
+similarity_matrix[similarity_matrix < 0] = 0
+
+distance_matrix = 1 - similarity_matrix
+clustering = DBSCAN(metric='precomputed', eps=first_eps, min_samples=2)
+labels = clustering.fit_predict(distance_matrix)
+
+
+# Créer un DataFrame pour les phrases uniques et leurs clusters
+clustered_phrases = pd.DataFrame({'Reasons': reasons, 'Cluster': labels})
+df = df.merge(clustered_phrases, left_on='Reason_1_nlped', right_on='Reasons', how='left')
+df = df.rename(columns={'Cluster': 'Cluster_Reason_1'})
+df = df.drop(columns=['Reasons'])
+
+df = df.merge(clustered_phrases, left_on='Reason_2_nlped', right_on='Reasons', how='left')
+df = df.rename(columns={'Cluster': 'Cluster_Reason_2'})
+df = df.drop(columns=['Reasons'])
+
+df = df.merge(clustered_phrases, left_on='Reason_3_nlped', right_on='Reasons', how='left')
+df = df.rename(columns={'Cluster': 'Cluster_Reason_3'})
+df = df.drop(columns=['Reasons'])
+
+df = df.drop_duplicates()
+
+
+num_clusters_eps_0_1 = len(set(labels)) - (1 if -1 in labels else 0)
+all_sentences = pd.concat([df['Reason_1_nlped'],df['Reason_2_nlped'],df['Reason_3_nlped']], ignore_index=True).dropna()
+all_clusters = pd.concat([df['Cluster_Reason_1'],df['Cluster_Reason_2'],df['Cluster_Reason_3']], ignore_index=True).dropna()
+combined_df = pd.DataFrame({'Reasons': all_sentences, 'Cluster': all_clusters})
+combined_df = combined_df[combined_df['Reasons'].notna() & combined_df['Reasons'].str.strip().astype(bool)]
+# Appliquer la fonction
+result = get_most_common_or_closest_description(combined_df, 'Cluster', 'Reasons')
+def get_reason_1_cluster(row, most_common_by_cluster):
+    if row['Cluster_Reason_1'] in most_common_by_cluster:
+        return most_common_by_cluster[row['Cluster_Reason_1']]
+    else:
+        return row['Reason_1_nlped']
+
+
+df['Reason_1_cluster'] = df.apply(lambda row: get_reason_1_cluster(row, result), axis=1)
+
+def get_reason_2_cluster(row, most_common_by_cluster):
+    if row['Cluster_Reason_2'] in most_common_by_cluster:
+        return most_common_by_cluster[row['Cluster_Reason_2']]
+    else:
+        return row['Reason_2_nlped']
+
+
+df['Reason_2_cluster'] = df.apply(lambda row: get_reason_2_cluster(row, result), axis=1)
+
+def get_reason_3_cluster(row, most_common_by_cluster):
+    if row['Cluster_Reason_3'] in most_common_by_cluster:
+        return most_common_by_cluster[row['Cluster_Reason_3']]
+    else:
+        return row['Reason_3_nlped']
+
+
+df['Reason_3_cluster'] = df.apply(lambda row: get_reason_3_cluster(row, result), axis=1)
+
+# Séparer les phrases assignées au cluster -1
+noise_df = df[(df['Cluster_Reason_1'] == -1) | (df['Cluster_Reason_2'] == -1) | (df['Cluster_Reason_3'] == -1)]
+
+
+noise_reasons = pd.concat([
+    noise_df.loc[noise_df['Cluster_Reason_1'] == -1, 'Reason_1_nlped'],
+    noise_df.loc[noise_df['Cluster_Reason_2'] == -1, 'Reason_2_nlped'],
+    noise_df.loc[noise_df['Cluster_Reason_3'] == -1, 'Reason_3_nlped']
+])
+
+noise_reasons_df = pd.DataFrame({'Reasons_v2': noise_reasons})
+
+noise_reasons_df = noise_reasons_df[noise_reasons_df['Reasons_v2'].notna() & noise_reasons_df['Reasons_v2'].str.strip().astype(bool)]
+noise_reasons_df = noise_reasons_df.reset_index(drop=True)
+
+clus_df = df[(df['Cluster_Reason_1'] != -1) | (df['Cluster_Reason_2'] != -1) | (df['Cluster_Reason_3'] != -1)]
+
+
+cluster_df = pd.concat([
+    clus_df.loc[(clus_df['Cluster_Reason_1'] != -1) & (clus_df['Cluster_Reason_1'] != ""), 'Reason_1_cluster'],
+    clus_df.loc[(clus_df['Cluster_Reason_2'] != -1) & (clus_df['Cluster_Reason_2'] != ""), 'Reason_2_cluster'],
+    clus_df.loc[(clus_df['Cluster_Reason_3'] != -1) & (clus_df['Cluster_Reason_3'] != ""), 'Reason_3_cluster']
+])
+
+all_clusters_df = pd.DataFrame({'Cluster': cluster_df})
+all_clusters_df = all_clusters_df.reset_index(drop=True)
+print(all_clusters_df)
+
+
+noise_embeddings = model_clus.encode(noise_reasons_df['Reasons_v2'].tolist())
+clus_embeddings = model_clus.encode(all_clusters_df['Cluster'].tolist())
+print(clus_embeddings)
+
+similarity_matrix2 = cosine_similarity(noise_embeddings, clus_embeddings)
+
+similarity_matrix2[similarity_matrix2 > 1] = 1
+similarity_matrix2[similarity_matrix2 < 0] = 0
+
+similarity_matrix2_distance = 1 - similarity_matrix2
+
+max_values = np.max(similarity_matrix2_distance, axis=1)
+max_indices = np.argmax(similarity_matrix2_distance, axis=1)
+
+assigned_clusters = []
+
+for i, max_value in enumerate(max_values):
+    if max_value > second_eps:
+        assigned_clusters.append(all_clusters_df['Cluster'].iloc[max_indices[i]])
+    else:
+        assigned_clusters.append(None)
+
+
+noise_reasons_df['Cluster_v2'] = assigned_clusters
+
+
+
+# Mettre à jour les clusters pour Reason_1_nlped & CO
+df = df.merge(noise_reasons_df, left_on='Reason_1_nlped', right_on='Reasons_v2', how='left')
+df = df.rename(columns={'Cluster_v2': 'Cluster_Reason_1_v2'})
+df = df.drop(columns=['Reasons_v2'])
+
+df = df.merge(noise_reasons_df, left_on='Reason_2_nlped', right_on='Reasons_v2', how='left')
+df = df.rename(columns={'Cluster_v2': 'Cluster_Reason_2_v2'})
+df = df.drop(columns=['Reasons_v2'])
+
+df = df.merge(noise_reasons_df, left_on='Reason_3_nlped', right_on='Reasons_v2', how='left')
+df = df.rename(columns={'Cluster_v2': 'Cluster_Reason_3_v2'})
+df = df.drop(columns=['Reasons_v2'])
+
+df = df.drop_duplicates()
+
+
+all_sentences = pd.concat([df['Reason_1_nlped'],df['Reason_2_nlped'],df['Reason_3_nlped']], ignore_index=True)
+all_clusters = pd.concat([df['Cluster_Reason_1_v2'],df['Cluster_Reason_2_v2'],df['Cluster_Reason_3_v2']], ignore_index=True)
+
+combined_df = pd.DataFrame({'Reasons': all_sentences, 'Cluster': all_clusters})
+
+all_reason_clus = pd.concat([df['Cluster_Reason_1_v2'],df['Cluster_Reason_2_v2'],df['Cluster_Reason_3_v2'],df['Cluster_Reason_1'],df['Cluster_Reason_2'],df['Cluster_Reason_3']], ignore_index=True)
+
+
+unique_reasons= pd.concat([df['Reason_1_cluster'], df['Reason_2_cluster'], df['Reason_3_cluster']]).unique()
+unique_reasons= [reason for reason in unique_reasons if reason != ""]
+
+
+out_reasons = pd.concat([
+    df.loc[(df['Cluster_Reason_1_v2'] == "") & (df['Cluster_Reason_1_v2'] == -1), ['case_number', 'description_nlped', 'description_trad_tag', 'description_summary']],
+    df.loc[(df['Cluster_Reason_2_v2'] == "") & (df['Cluster_Reason_2_v2'] == -1), ['case_number', 'description_nlped', 'description_trad_tag', 'description_summary']],
+    df.loc[(df['Cluster_Reason_3_v2'] == "") & (df['Cluster_Reason_3_v2'] == -1), ['case_number', 'description_nlped', 'description_trad_tag', 'description_summary']]
+])
+# Supprimer les cases vides
+out_reasons = out_reasons.dropna().reset_index(drop=True)
+# Compter les occurrences de chaque raison
+reason_counts = {reason: (all_reason_clus == reason).sum() for reason in unique_reasons}
+
+# Filtrer les raisons qui apparaissent plus d'une fois
+filtered_reasons = {reason: count for reason, count in reason_counts.items() if count > 1}
+
+case_analysis_df = pd.DataFrame(list(filtered_reasons.items()), columns=['Reason', 'Count'])
+
+total_count = case_analysis_df['Count'].sum()
+case_analysis_df['Proportion'] = case_analysis_df['Count'] / total_count
+
+
+destination_sheet = 'C:/Users/tristan.bernard/Downloads/'+name_output_sheet+'.xlsx'
+
+with pd.ExcelWriter(destination_sheet, engine='openpyxl') as writer:
+    df.to_excel(writer, sheet_name='Raw Data', index=False)
+    case_analysis_df.to_excel(writer, sheet_name='Case_Analysis', index=False)
+    out_reasons.to_excel(writer, sheet_name='Out of the Box reasons', index=False)
