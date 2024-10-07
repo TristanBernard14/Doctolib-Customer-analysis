@@ -1,0 +1,48 @@
+from sentence_transformers import SentenceTransformer, InputExample, losses, evaluation
+from torch.utils.data import DataLoader
+import pandas as pd
+from transformers import AdamW
+
+# Charger le modèle pré-entraîné
+model = SentenceTransformer("C:/Users/tristan.bernard/Classiv0")
+
+# Charger les données depuis le fichier Excel
+Wording_excel = "C:/Users/tristan.bernard/Downloads/Output Classification_Train_Data_sheet.xlsx"
+train_sheet = 'Data_to_train_classification'
+
+epochs = 5
+
+output_classification_model = 'C:/Users/tristan.bernard/ClassificationvTest'
+
+
+#NO NEED TO GO FURTHER TO RUN THE CODE
+#----------------------------------------------------------------------------------------------------------------------------------------
+
+
+df = pd.read_excel(Wording_excel, sheet_name=train_sheet)
+
+train_examples = [InputExample(texts=[row['Sentence 1'], row['Sentence 2']], label=row['Adjusted_score']) for _, row in df.iterrows()]
+
+train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=4)
+
+train_loss = losses.CosineSimilarityLoss(model)
+
+class CustomEmbeddingSimilarityEvaluator(evaluation.EmbeddingSimilarityEvaluator):
+    def __call__(self, model, output_path=None, epoch=-1, steps=-1):
+        scores = super().__call__(model, output_path, epoch, steps)
+        return {'sts-eval_pearson_cosine': scores['sts-eval_pearson_cosine']}
+
+evaluator = CustomEmbeddingSimilarityEvaluator.from_input_examples(train_examples, name='sts-eval', main_similarity=evaluation.SimilarityFunction.COSINE)
+
+optimizer = AdamW(model.parameters(), lr=2e-5)
+
+model.fit(
+    train_objectives=[(train_dataloader, train_loss)],
+    evaluator=evaluator,
+    epochs=epochs,
+    evaluation_steps=30,
+    optimizer_params={'lr': 8e-4},
+    output_path=output_classification_model 
+)
+
+model.save(output_classification_model)
