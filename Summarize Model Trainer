@@ -1,0 +1,239 @@
+import pandas as pd
+import torch
+from transformers import T5Tokenizer, T5ForConditionalGeneration, Trainer, TrainingArguments
+from evaluate import load
+import torch.optim as optim
+from transformers import EvalPrediction
+
+
+
+"""
+model = T5ForConditionalGeneration.from_pretrained('t5-large')
+tokenizer = T5Tokenizer.from_pretrained('t5-large')
+"""
+
+rouge_metric = load("rouge")
+
+#Here you have to specify the name of the model you want to train. You can find it in your local disk, or use the latest version I have trained available on the drive :) 
+tokenizer_save_path = "./T5_WCB_v1"
+model_save_path =  "./T5_WCB_v9"
+
+#Mention here the save name of the model. It can be whatever you want.
+output_model_save_path =  "./T5_WCB_v11"
+#Here specify the filepath of the sheet where you have your trained data. It has to be an Excel file (xlsx).
+Data_sheet = 'C:/Users/tristan.bernard/Downloads/Training_DATA.xlsx'
+
+#HYPER PARAMETERS
+#num_train_epochs represents the number of time a line will be trained during the process. 
+num_train_epochs=3
+
+#learning_rate is represent the impact on the training on the weigths of the models.Do not set it >2e-4 and not <1e-5
+learning_rate=6e-5
+
+
+#NO NEED TO GO FURTHER TO RUN THE CODE
+#----------------------------------------------------------------------------------------------------------------------------------------
+
+
+# Fonction pour obtenir l'entrée de l'utilisateur
+def get_user_input(df):
+    while True:
+        user_input = input(f"Write 'All' if you want to train the model on the whole data of the Train sheet, else indicate the number of lines from the bottom on which you want to train (below {len(df)}):\n")
+        if user_input.lower() == 'all':
+            return df
+        elif user_input.isdigit() and int(user_input) < len(df):
+            return df.tail(int(user_input))
+        else:
+            print(f"Entrée invalide. Veuillez entrer 'All' ou un nombre inférieur à {len(df)}.")
+
+# Classe pour préparer les données
+class DataPreparer:
+    def __init__(self, sheet_path, train_sheet, test_sheet):
+        self.sheet_path = sheet_path
+        self.train_sheet = train_sheet
+        self.test_sheet = test_sheet
+        self.df_train = pd.read_excel(sheet_path, sheet_name=train_sheet)
+        self.df_test = pd.read_excel(sheet_path, sheet_name=test_sheet)
+
+    def prepare_data(self, df):
+        df['description_trad'] = df['description_trad'].astype(str)
+        df['manual_sum_reason'] = df['manual_sum_reason'].astype(str)
+        return df
+
+    def prepare_train_data(self):
+        self.df_train = self.prepare_data(self.df_train)
+        return self.df_train
+
+    def prepare_test_data(self):
+        self.df_test = self.prepare_data(self.df_test)
+        return self.df_test
+
+# Charger le modèle et le tokenizer
+model = T5ForConditionalGeneration.from_pretrained(model_save_path)
+tokenizer = T5Tokenizer.from_pretrained(tokenizer_save_path)
+
+train_sheet = 'Training'
+test_sheet = 'Test'
+
+print("\nHello ! Ready to train ?\n")
+
+data_preparer = DataPreparer(Data_sheet, train_sheet, test_sheet)
+df_train = data_preparer.prepare_train_data()
+df_test = data_preparer.prepare_test_data()
+
+# Utiliser le DataFrame filtré pour l'entraînement
+df_train = get_user_input(df_train)
+
+# Fonction pour compter les tokens
+def count_tokens(text):
+    return len(tokenizer.encode(text, max_length=256, truncation=True))
+
+max_description_trad_length = df_train['description_trad'].apply(lambda x: count_tokens(x)).max()
+max_manual_sum_reason_length = df_train['manual_sum_reason'].apply(lambda x: count_tokens(x)).max()
+
+print(f"The maximum length of input cases : {max_description_trad_length}") 
+print(f"The maximum length of output cases: {max_manual_sum_reason_length}") 
+
+# Classe CustomDataset
+
+
+from torch.utils.data import DataLoader
+
+def tokenize_and_prepare_data(df):
+    model_inputs = tokenizer(df['description_trad'].tolist(), max_length=100, truncation=True, padding="max_length", return_tensors="pt")
+    labels = tokenizer(df['manual_sum_reason'].tolist(), max_length=45, truncation=True, padding="max_length", return_tensors="pt")
+    model_inputs["labels"] = labels["input_ids"]
+    return model_inputs
+
+# Préparer les datasets
+df_test = df_test.head(2)
+df_test = df_test[['description_trad', 'manual_sum_reason']]
+
+train_encodings = tokenize_and_prepare_data(df_train)
+test_encodings = tokenize_and_prepare_data(df_test)
+
+# Convertir les encodages en une liste de dictionnaires
+train_dataset = [{key: val[i] for key, val in train_encodings.items()} for i in range(len(train_encodings['input_ids']))]
+test_dataset = [{key: val[i] for key, val in test_encodings.items()} for i in range(len(test_encodings['input_ids']))]
+
+
+# Configuration de la génération
+generation_config = {
+    'temperature': 0.9,
+    'top_k': 35,
+    'top_p': 0.95,
+    'no_repeat_ngram_size': 2,
+    'max_new_tokens': 45,
+    'num_beams': 4,
+    'early_stopping': True
+}
+
+def generate_predictions(model, tokenizer, inputs, max_length=45, num_beams=4):
+    input_ids = inputs['input_ids']
+    attention_mask = inputs['attention_mask']
+    
+    # Générer les prédictions
+    with torch.no_grad():
+        generated_ids = model.generate(input_ids, attention_mask=attention_mask, max_length=max_length, num_beams=num_beams, early_stopping=True)
+    
+    # Décoder les prédictions
+    decoded_preds = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+    return decoded_preds
+
+
+import torch
+from torch.utils.data import DataLoader
+from transformers import Trainer, TrainingArguments, EvalPrediction
+
+# Fonction pour tokeniser et préparer les données
+def tokenize_and_prepare_data(df):
+    model_inputs = tokenizer(df['description_trad'].tolist(), max_length=100, truncation=True, padding="max_length", return_tensors="pt")
+    labels = tokenizer(df['manual_sum_reason'].tolist(), max_length=45, truncation=True, padding="max_length", return_tensors="pt")
+    model_inputs["labels"] = labels["input_ids"]
+    return model_inputs
+
+df_test = df_test.head(20)
+df_test = df_test[['description_trad', 'manual_sum_reason']]
+print(df_test)
+
+train_encodings = tokenize_and_prepare_data(df_train)
+test_encodings = tokenize_and_prepare_data(df_test)
+
+train_dataset = [{key: val[i] for key, val in train_encodings.items()} for i in range(len(train_encodings['input_ids']))]
+test_dataset = [{key: val[i] for key, val in test_encodings.items()} for i in range(len(test_encodings['input_ids']))]
+
+def generate_predictions(model, tokenizer, inputs, max_length=45, num_beams=4):
+    input_ids = inputs['input_ids']
+    
+    with torch.no_grad():
+        generated_ids = model.generate(input_ids, max_length=max_length, num_beams=num_beams, early_stopping=True)
+    
+    # Décoder les prédictions
+    decoded_preds = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+    return decoded_preds
+
+def compute_metrics(eval_pred: EvalPrediction):
+    labels = eval_pred.label_ids
+    input_ids = eval_pred.inputs
+
+    # Convertir les étiquettes en listes d'entiers
+    labels = labels.tolist()
+    labels = [[(label if label != -100 else tokenizer.pad_token_id) for label in label_seq] for label_seq in labels]
+
+    # Décoder les étiquettes
+    decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
+
+    input_tens = torch.tensor(input_ids)
+    generated_ids = model.generate(input_tens, max_length=45, num_beams=4, early_stopping=True)
+    decoded_preds = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+
+    result = rouge_metric.compute(predictions=decoded_preds, references=decoded_labels)
+    
+    # Si les résultats sont des nombres flottants, les utiliser directement
+    if isinstance(next(iter(result.values())), float):
+        result = {key: value for key, value in result.items()}
+    else:
+        # Sinon, extraire les valeurs de fmeasure
+        result = {key: value.mid.fmeasure for key, value in result.items()}
+
+    prediction_lens = [len(pred.split()) for pred in decoded_preds]
+    result["gen_len"] = sum(prediction_lens) / len(prediction_lens)
+    return result
+
+
+optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+per_device_train_batch_size = 4
+warmup = int(num_train_epochs * len(df_train) / (2 * per_device_train_batch_size))
+
+training_args = TrainingArguments(
+    output_dir='./result',
+    num_train_epochs=num_train_epochs,
+    per_device_train_batch_size=per_device_train_batch_size,
+    warmup_steps=warmup,
+    weight_decay=0.001,
+    logging_dir='./logs',
+    logging_steps=20,
+    learning_rate=learning_rate,
+    max_grad_norm=300,
+    evaluation_strategy="steps", 
+    eval_steps=50,
+    include_inputs_for_metrics=True
+)
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=test_dataset,
+    optimizers=(optimizer, None),
+    compute_metrics=compute_metrics,
+    )
+
+
+trainer.train()
+
+# Évaluation du modèle
+results = trainer.evaluate()
+
+
+model.save_pretrained(output_model_save_path)
