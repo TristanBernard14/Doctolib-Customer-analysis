@@ -1,0 +1,26 @@
+from sentence_transformers import SentenceTransformer
+import pandas as pd
+
+# Charger le modèle pré-entraîné
+model = SentenceTransformer("C:/Users/tristan.bernard/Classiv0")
+
+Wording_excel = "C:/Users/tristan.bernard/Downloads/Classification_Train_Data_Sheet.xlsx"
+
+output_excel = "C:/Users/tristan.bernard/Downloads/Tristanvv66.xlsx"
+
+test_sheet = 'Data_to_test'
+
+#NO NEED TO GO FURTHER TO RUN THE CODE
+#----------------------------------------------------------------------------------------------------------------------------------------
+
+
+df = pd.read_excel(Wording_excel, sheet_name=test_sheet)
+def compute_similarity(row):
+    embeddings = model.encode([row['Sentence 1'], row['Sentence 2']])
+    similarity_score = model.similarity(embeddings[0], embeddings[1])[0][0].item()
+    return similarity_score
+
+# Ajouter les scores de similarité au DataFrame
+df['Score_base'] = df.apply(compute_similarity, axis=1)
+
+df.to_excel(output_excel,index=False)
