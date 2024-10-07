@@ -1,0 +1,121 @@
+import torch
+from torch.utils.data import DataLoader
+from transformers import Trainer, TrainingArguments, EvalPrediction
+from transformers import T5Tokenizer, T5ForConditionalGeneration
+import pandas as pd
+from rouge_score import rouge_scorer
+from datetime import datetime
+
+#You have to register the name of the tokenizer you are using here. It is just the file name of you tokenizer that you can find in the local disk.
+tokenizer_save_path = "./T5_WCB_v1"
+
+#You have to register the name of the model you are using here. It is just the file name of you model that you can find in the local disk.
+model_save_path =  "./T5_WCB_v9"
+
+Data_Sheet = 'C:/Users/tristan.bernard/Downloads/Training_DATA.xlsx'
+
+#Select the quality of the model you want to evluate. It can be "very high" / "high" / "medium" /"low"
+quality='high'
+
+temperature =0.9
+top_k = 25
+top_p=0.95
+
+#NO NEED TO GO FURTHER TO RUN THE CODE
+#----------------------------------------------------------------------------------------------------------------------------------------
+
+print(f"You are evaluating the model in  {quality} quality mode")
+
+if quality == 'high':
+    num_beams=4
+    quantified_model = 'No'
+
+if quality == 'low':
+    num_beams=2
+    quantified_model = 'Yes'
+
+model = T5ForConditionalGeneration.from_pretrained(model_save_path)
+model.eval()
+tokenizer = T5Tokenizer.from_pretrained(tokenizer_save_path)
+
+quantified_model = 'No'
+
+if quantified_model == 'Yes':
+    model = torch.quantization.quantize_dynamic(
+        model,
+        {torch.nn.Linear},  
+        dtype=torch.qint8 
+    )
+
+
+generation_config = {
+    'temperature': temperature,
+    'top_k': top_k,
+    'top_p': top_p,
+    'no_repeat_ngram_size': 2,
+    'do_sample': True,  
+    'max_new_tokens' : 45,
+    'num_return_sequences':1,
+    'num_beams':num_beams,
+}
+
+Data_Sheet = 'C:/Users/tristan.bernard/Downloads/Training_DATA.xlsx'
+test_sheet = 'Test'
+
+df_test = pd.read_excel(Data_Sheet, sheet_name=test_sheet)
+
+def prepare_data_test(df):
+    df['description_trad'] = df['description_trad'].astype(str)
+    df['manual_sum_reason'] = df['manual_sum_reason'].astype(str)
+    return df
+
+df_test = prepare_data_test(df_test)
+
+total_lines = len(df_test)
+counter = 0
+
+def summarize_texts_WCB(texts):
+    global counter
+    if not isinstance(texts, str):
+        return "Delete"
+    counter += 1
+    print(f"Compteur: {counter}/{total_lines}")
+    input_ids = tokenizer.encode(texts, return_tensors='pt', truncation=True, max_length=100)
+    with torch.no_grad():
+        summary_ids = model.generate(input_ids, **generation_config)
+        summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+    return summary
+
+scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+
+def calculate_rouge_scores(summary, reference):
+    scores = scorer.score(reference, summary)
+    return scores
+
+# Remplir les valeurs manquantes avec une chaîne vide
+df_test = df_test.fillna({'description_trad': '', 'manual_sum_reason': ''})
+
+end_time2 = datetime.now()
+df_test['description_summary'] = df_test['description_trad'].apply(summarize_texts_WCB)
+now = datetime.now()
+duration = now - end_time2
+print("temps pour synthèse:", duration)
+
+df_test['rouge_scores'] = df_test.apply(lambda row: calculate_rouge_scores(row['description_summary'], row['manual_sum_reason']), axis=1)
+
+rouge1_scores = [score['rouge1'].fmeasure for score in df_test['rouge_scores']]
+rouge2_scores = [score['rouge2'].fmeasure for score in df_test['rouge_scores']]
+rougeL_scores = [score['rougeL'].fmeasure for score in df_test['rouge_scores']]
+
+
+average_rouge1 = 100*sum(rouge1_scores) / len(rouge1_scores)
+average_rouge2 = 100*sum(rouge2_scores) / len(rouge2_scores)
+average_rougeL = 100*sum(rougeL_scores) / len(rougeL_scores)
+
+
+print(f"Average ROUGE-1 score: {average_rouge1}")
+print(f"ROUGE-1 mesure la correspondance des unigrammes (mots individuels) entre le résumé généré et le résumé de référence. Un score ROUGE-1 de {average_rouge1} signifie que {average_rouge1}% de mots du résumé généré correspondent aux mots du résumé de référence.\n")
+print(f"Average ROUGE-2 score: {average_rouge2}")
+print(f"ROUGE-2 mesure la correspondance des bigrammes (paires de mots consécutifs) entre le résumé généré et le résumé de référence. Un score ROUGE-2 de {average_rouge2} signifie que {average_rouge2}% des paires de mots consécutifs du résumé généré correspondent à celles du résumé de référence.\n")
+print(f"Average ROUGE-L score: {average_rougeL}")
+print(f"ROUGE-L mesure la plus longue sous-séquence commune (LCS) entre le résumé généré et le résumé de référence, ce qui est une indication de la cohérence globale de la structure des phrases. Un score ROUGE-L de {average_rougeL} signifie que {average_rougeL}% de la plus longue sous-séquence commune est partagée entre le résumé généré et le résumé de référence.\n")
